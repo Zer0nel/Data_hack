@@ -1,0 +1,117 @@
+# Import libraries
+library(tidyverse)
+library(caret)
+library(e1071)
+library(ROSE)
+library(randomForest)
+library(xgboost)
+library(mltools)
+library(imager)
+library(stringr)
+library(jpeg)
+
+# Import structured data
+car_data <- read.csv("structured_data.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Import unstructured data
+car_images <- read.csv("unstructured_data.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Remove unwanted columns
+car_data <- select(car_data, -New_Price)
+
+# Replace missing values with NA
+car_data[car_data == ""] <- NA
+
+# Convert data types
+car_data$Year <- as.factor(car_data$Year)
+car_data$Kilometers_Driven <- as.numeric(str_replace_all(car_data$Kilometers_Driven, ",", ""))
+car_data$Fuel_Type <- as.factor(car_data$Fuel_Type)
+car_data$Transmission <- as.factor(car_data$Transmission)
+car_data$Owner_Type <- as.factor(car_data$Owner_Type)
+car_data$Mileage <- as.numeric(str_replace_all(str_replace_all(car_data$Mileage, " kmpl", ""), " km/kg", ""))
+car_data$Engine <- as.numeric(str_replace_all(car_data$Engine, " CC", ""))
+car_data$Power[car_data$Power == "null bhp"] <- NA
+car_data$Power <- as.numeric(str_replace_all(str_replace_all(car_data$Power, " bhp", ""), "null", "0"))
+car_data$Seats[car_data$Seats == ""] <- NA
+car_data$Seats <- as.numeric(car_data$Seats)
+car_data$Price <- as.numeric(str_replace_all(car_data$Price, ",", ""))
+
+# Feature engineering
+car_data$Mileage_Per_Engine <- car_data$Mileage / car_data$Engine
+car_data$Engine_Per_Power <- car_data$Engine / car_data$Power
+
+# Extract features from images
+car_images$Filepath <- paste("car_images/", car_images$Filename, sep = "")
+car_images$Image <- lapply(car_images$Filepath, function(x) {
+  img <- load.image(x)
+  imager::resize(img, c(224, 224))
+})
+car_images$Image <- lapply(car_images$Image, function(x) {
+  x <- imager::as.cimg(x)
+  x <- x / 255
+  x
+})
+car_images$Pixels <- lapply(car_images$Image, function(x) {
+  unlist(x@.Data)
+})
+car_images$Scratches <- lapply(car_images$Image,
+
+# Integration of structured and unstructured data
+car_images$Name <- str_replace_all(car_images$Filename, ".jpg", "")
+car_data$Name <- str_replace_all(car_data$Name, " ", "")
+car_data_merged <- left_join(car_data, car_images, by = "Name")
+
+# Partition the data into training and testing sets
+set.seed(123)
+trainIndex <- createDataPartition(car_data_merged$Price, p = 0.7, list = FALSE, times = 1)
+train <- car_data_merged[trainIndex,]
+test <- car_data_merged[-trainIndex,]
+
+# Define the model
+xgbModel <- train(
+  Price ~ .,
+  data = train,
+  method = "xgbTree",
+  metric = "RMSE",
+  trControl = trainControl(
+    method = "cv",
+    number = 5,
+    verboseIter = TRUE,
+    allowParallel = TRUE,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  ),
+  tuneGrid = expand.grid(
+    nrounds = 1000,
+    max_depth = c(4, 6, 8, 10),
+    eta = c(0.01, 0.05, 0.1, 0.3),
+    gamma = 0,
+    colsample_bytree = 0.8,
+    subsample = 0.8
+  )
+)
+
+# Make predictions on the testing data
+predictions <- predict(xgbModel, test)
+
+# Calculate evaluation metrics
+RMSE <- sqrt(mean((test$Price - predictions)^2))
+MAE <- mean(abs(test$Price - predictions))
+R_Squared <- cor(test$Price, predictions)^2
+
+# Print evaluation metrics
+print(paste0("RMSE: ", RMSE))
+print(paste0("MAE: ", MAE))
+print(paste0("R-squared: ", R_Squared))
+
+# Define a function to preprocess the input data
+preprocess_data <- function(data) {
+  data$Kilometers_Driven <- as.numeric(str_replace_all(data$Kilometers_Driven, ",", ""))
+  data$Mileage <- as.numeric(str_replace_all(str_replace_all(data$Mileage, " kmpl", ""), " km/kg", ""))
+  data$Engine <- as.numeric(str_replace_all(data$Engine, " CC", ""))
+  data$Power[car_data$Power == "null bhp"] <- NA
+  data$Power <- as.numeric(str_replace_all(str_replace_all(data$Power, " bhp", ""), "null", "0"))
+  data$Seats[car_data$Seats == ""] <- NA
+  data$Seats <- as.numeric(data$Seats)
+  data$Mileage_Per_Engine <- data$Mileage / data$Engine
+  data$Engine_Per_Power <- data$Engine / data$Power
