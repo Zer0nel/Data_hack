@@ -26,11 +26,6 @@ data$Engine <- as.numeric(gsub(" CC", "", data$Engine))
 data$Power <- as.numeric(gsub("null bhp| bhp", "112", data$Power))
 data$Power[is.na(data$Power)] <- 112
 
-test$Mileage <- as.numeric(gsub(" kmpl| km/kg", "", test$Mileage))
-test$Engine <- as.numeric(gsub(" CC", "", test$Engine))
-test$Power <- as.numeric(gsub("null bhp| bhp", "112", test$Power))
-test$Power[is.na(test$Power)] <- 112
-
 # define list of features and create new dataframes
 features <- c("Cars", "Location", "Year", "Kilometers_Driven", "Fuel_Type", "Transmission", "Owner_Type", "Mileage", "Engine", "Power", "Seats", "Price")
 data <- select(data, one_of(features))
