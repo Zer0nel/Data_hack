@@ -14,7 +14,6 @@ library(jpeg)
 car_data <- read.csv("structured_data.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # Import unstructured data
-car_images <- read.csv("unstructured_data.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # Remove unwanted columns
 car_data <- select(car_data, -New_Price)
