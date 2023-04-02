@@ -1,118 +1,112 @@
-# Import libraries
-library(tidyverse)
-library(caret)
-library(e1071)
-library(ROSE)
-library(randomForest)
-library(xgboost)
-library(mltools)
-library(imager)
-library(stringr)
-library(jpeg)
+# Load the necessary libraries
+library(tidyverse) # for data manipulation and visualization
+library(keras) # for building deep learning models
+library(imager) # for image preprocessing
+library(Rtsne) # for feature reduction
 
-# Import structured data
-car_data <- read.csv("structured_data.csv", header = TRUE, stringsAsFactors = FALSE)
+# Read the structured data from CSV file
+structured_data <- read.csv("structured_data.csv")
 
-# Import unstructured data
+# Read the unstructured data (images)
+image_files <- list.files("image_folder", pattern = ".jpg", full.names = TRUE)
+images <- lapply(image_files, load.image)
 
-# Remove unwanted columns
-car_data <- select(car_data, -New_Price)
+# Preprocess the structured data
+structured_data <- structured_data %>%
+  select(-New_Price) %>% # remove New_Price column since it has many missing values
+  mutate(Fuel_Type = as.factor(Fuel_Type), # convert categorical variables to factors
+         Transmission = as.factor(Transmission),
+         Owner_Type = as.factor(Owner_Type)) %>%
+  mutate_if(is.character, as.factor) %>% # convert character variables to factors
+  mutate_if(is.factor, as.numeric) %>% # convert factors to numeric
+  mutate_if(is.numeric, scale) # standardize numeric variables
 
-# Replace missing values with NA
-car_data[car_data == ""] <- NA
+# Preprocess the unstructured data (images)
+# Extract features from images using pre-trained VGG16 model
+vgg_model <- application_vgg16(include_top = FALSE, input_shape = c(224, 224, 3))
+image_features <- lapply(images, function(x) predict(vgg_model, array_reshape(imager::imresize(x, c(224, 224)), c(1, 224, 224, 3)), batch_size = 1))
+image_features <- lapply(image_features, function(x) k_reshape(x, c(1, dim(x)[[2]])))
+image_features <- lapply(image_features, function(x) k_flatten(x))
 
-# Convert data types
-car_data$Year <- as.factor(car_data$Year)
-car_data$Kilometers_Driven <- as.numeric(str_replace_all(car_data$Kilometers_Driven, ",", ""))
-car_data$Fuel_Type <- as.factor(car_data$Fuel_Type)
-car_data$Transmission <- as.factor(car_data$Transmission)
-car_data$Owner_Type <- as.factor(car_data$Owner_Type)
-car_data$Mileage <- as.numeric(str_replace_all(str_replace_all(car_data$Mileage, " kmpl", ""), " km/kg", ""))
-car_data$Engine <- as.numeric(str_replace_all(car_data$Engine, " CC", ""))
-car_data$Power[car_data$Power == "null bhp"] <- NA
-car_data$Power <- as.numeric(str_replace_all(str_replace_all(car_data$Power, " bhp", ""), "null", "0"))
-car_data$Seats[car_data$Seats == ""] <- NA
-car_data$Seats <- as.numeric(car_data$Seats)
-car_data$Price <- as.numeric(str_replace_all(car_data$Price, ",", ""))
+# Reduce the dimensionality of the image features using t-SNE
+tsne_features <- Rtsne::Rtsne(do.call(rbind, image_features), perplexity = 30)$Y
 
-# Feature engineering
-car_data$Mileage_Per_Engine <- car_data$Mileage / car_data$Engine
-car_data$Engine_Per_Power <- car_data$Engine / car_data$Power
+# Combine the structured and unstructured features
+combined_features <- cbind(structured_data, tsne_features)
 
-# Extract features from images
-car_images$Filepath <- paste("car_images/", car_images$Filename, sep = "")
-car_images$Image <- lapply(car_images$Filepath, function(x) {
-  img <- jpeg::readJPEG(x)
-  imager::resize(img, c(224, 224))
-})
-car_images$Image <- lapply(car_images$Image, function(x) {
-  x <- imager::as.cimg(x)
-  x <- x / 255
-  x
-})
-car_images$Pixels <- lapply(car_images$Image, function(x) {
-  unlist(x@.Data)
-})
-car_images$Scratches <- lapply(car_images$Image, function(x) {
-  imager::entropy(x)
-})
+# Split the data into training and testing sets
+train_index <- sample(nrow(combined_features), size = 0.8 * nrow(combined_features))
+train_data <- combined_features[train_index, ]
+test_data <- combined_features[-train_index, ]
 
-# Integration of structured and unstructured data
-car_images$Name <- str_replace_all(car_images$Filename, ".jpg", "")
-car_data$Name <- str_replace_all(car_data$Name, " ", "")
-car_data_merged <- left_join(car_data, car_images, by = "Name")
+# Define the model architecture
+model <- keras_model_sequential() %>%
+  layer_dense(units = 32, activation = "relu", input_shape = c(13, 2)) %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 16, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 1, activation = "linear")
 
-# Partition the data into training and testing sets
-set.seed(123)
-trainIndex <- createDataPartition(car_data_merged$Price, p = 0.7, list = FALSE, times = 1)
-train <- car_data_merged[trainIndex,]
-test <- car_data_merged[-trainIndex,]
-
-# Define the model
-xgbModel <- train(
-  Price ~ .,
-  data = train,
-  method = "xgbTree",
-  metric = "RMSE",
-  trControl = trainControl(
-    method = "cv",
-    number = 5,
-    verboseIter = TRUE,
-    allowParallel = TRUE,
-    classProbs = TRUE,
-    summaryFunction = twoClassSummary
-  ),
-  tuneGrid = expand.grid(
-    nrounds = 1000,
-    max_depth = c(4, 6, 8, 10),
-    eta = c(0.01, 0.05, 0.1, 0.3),
-    gamma = 0,
-    colsample_bytree = 0.8,
-    subsample = 0.8
-  )
+# Compile the model
+model %>% compile(
+  optimizer = "adam",
+  loss = "mse",
+  metrics = list("mae")
 )
 
-# Make predictions on the testing data
-predictions <- predict(xgbModel, test)
+# Train the model
+history <- model %>% fit(
+  x = list(train_data[, 1:13], train_data[, 14:15]),
+  y = train_data[, 16],
+  epochs = 100,
+  batch_size = 32,
+  validation_split = 0.2,
+  callbacks = list(early_stopping(patience = 5))
+)
 
-# Calculate evaluation metrics
-RMSE <- sqrt(mean((test$Price - predictions)^2))
-MAE <- mean(abs(test$Price - predictions))
-R_Squared <- cor(test$Price, predictions)^2
+# Evaluate the model
+model %>% evaluate(
+  x = list(test_data[, 1:13], test_data[, 14:15]),
+  y = test_data[, 16]
+)
 
-# Print evaluation metrics
-print(paste0("RMSE: ", RMSE))
-print(paste0("MAE: ", MAE))
-print(paste0("R-squared: ", R_Squared))
+# Make predictions on new data
+new_data <- data.frame(
+  Name = "Toyota Corolla",
+  Location = "Mumbai",
+  Year = 2017,
+  Kilometers_Driven = 25000,
+  Fuel_Type = "Petrol",
+  Transmission = "Manual",
+  Owner_Type = "First",
+  Mileage = 18.0,
+  Engine = 1197,
+  Power = 82,
+  Seats = 5
+)
 
-# Define a function to preprocess the input dat
-preprocess_data <- function(data) {
-  data$Kilometers_Driven <- as.numeric(str_replace_all(data$Kilometers_Driven, ",", ""))
-  data$Mileage <- as.numeric(str_replace_all(str_replace_all(data$Mileage, " kmpl", ""), " km/kg", ""))
-  data$Engine <- as.numeric(str_replace_all(data$Engine, " CC", ""))
-  data$Power[car_data$Power == "null bhp"] <- NA
-  data$Power <- as.numeric(str_replace_all(str_replace_all(data$Power, " bhp", ""), "null", "0"))
-  data$Seats[car_data$Seats == ""] <- NA
-  data$Seats <- as.numeric(data$Seats)
-  data$Mileage_Per_Engine <- data$Mileage / data$Engine
-  data$Engine_Per_Power <- data$Engine / data$Power
+# Preprocess the structured data for the new data point
+new_data <- new_data %>%
+  select(-New_Price) %>%
+  mutate(Fuel_Type = as.factor(Fuel_Type),
+         Transmission = as.factor(Transmission),
+         Owner_Type = as.factor(Owner_Type)) %>%
+  mutate_if(is.character, as.factor) %>%
+  mutate_if(is.factor, as.numeric) %>%
+  mutate_if(is.numeric, scale)
+
+# Extract features from the new data point's image
+new_image <- load.image("new_image.jpg")
+new_image_feature <- predict(vgg_model, array_reshape(imager::imresize(new_image, c(224, 224)), c(1, 224, 224, 3)), batch_size = 1)
+new_image_feature <- k_reshape(new_image_feature, c(1, dim(new_image_feature)[[2]]))
+new_image_feature <- k_flatten(new_image_feature)
+
+# Reduce the dimensionality of the image feature using t-SNE
+new_image_tsne_feature <- Rtsne::Rtsne(rbind(image_features, new_image_feature), perplexity = 30)$Y[nrow(image_features) + 1, ]
+
+# Combine the structured and unstructured features for the new data point
+new_combined_features <- cbind(new_data, new_image_tsne_feature)
+
+# Make prediction using the trained model
+new_price <- model %>% predict(list(new_combined_features[, 1:13], new_combined_features[, 14:15]))
+new_price
