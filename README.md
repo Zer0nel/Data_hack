@@ -30,7 +30,7 @@ The preprocessing step involves cleaning the data and feature engineering. The c
 The structured and unstructured data are integrated by joining the two datasets based on car names. The images are processed and converted into pixels, which are added to the structured data.
 
 ## Model
-The project uses the XGBoost algorithm to create a predictive model. The model is trained using the training data and evaluated using the testing data. The evaluation metrics used are root mean square error (RMSE), mean absolute error (MAE), and R-squared.
+The project uses the *XGBoost algorithm* to create a predictive model. The model is trained using the training data and evaluated using the testing data. The evaluation metrics used are root mean square error (RMSE), mean absolute error (MAE), and R-squared.
 
 ## Usage
 The project includes a function preprocess_data that can be used to preprocess new data for predictions. The function takes a data frame as input and returns a preprocessed data frame. The function can be used to preprocess new data before feeding it into the model for predictions.
