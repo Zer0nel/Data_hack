@@ -40,6 +40,24 @@ car_data$Price <- as.numeric(str_replace_all(car_data$Price, ",", ""))
 car_data$Mileage_Per_Engine <- car_data$Mileage / car_data$Engine
 car_data$Engine_Per_Power <- car_data$Engine / car_data$Power
 
+# Extract features from images
+car_images$Filepath <- paste("car_images/", car_images$Filename, sep = "")
+car_images$Image <- lapply(car_images$Filepath, function(x) {
+  img <- jpeg::readJPEG(x)
+  imager::resize(img, c(224, 224))
+})
+car_images$Image <- lapply(car_images$Image, function(x) {
+  x <- imager::as.cimg(x)
+  x <- x / 255
+  x
+})
+car_images$Pixels <- lapply(car_images$Image, function(x) {
+  unlist(x@.Data)
+})
+car_images$Scratches <- lapply(car_images$Image, function(x) {
+  imager::entropy(x)
+})
+
 # Integration of structured and unstructured data
 car_images$Name <- str_replace_all(car_images$Filename, ".jpg", "")
 car_data$Name <- str_replace_all(car_data$Name, " ", "")
